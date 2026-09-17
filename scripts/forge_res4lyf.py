@@ -21,12 +21,18 @@ import sys
 import traceback
 from typing import Callable
 
+import gradio as gr
+from modules import infotext_utils, scripts
+from modules.ui_components import InputAccordion
+
 # Ensure the extension root is on sys.path so `lib_res4lyf` is importable.
 _EXT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _EXT_ROOT not in sys.path:
     sys.path.insert(0, _EXT_ROOT)
 
 logger = logging.getLogger("sd-forge-res4lyf")
+
+_CURRENT_SKIP_FINAL: bool | None = None
 
 # ---------------------------------------------------------------------------
 # Install comfy compat shim BEFORE importing the vendored code.
@@ -79,16 +85,27 @@ def _build_wrapper(rk_type: str, ode: bool = False) -> Callable:
         in_device = x.device
 
         call_kwargs = dict(kwargs)
-        try:
-            from modules import shared
-            skip_final = getattr(shared.opts, "res4lyf_skip_final_model_call", True)
-        except Exception:
-            skip_final = True
 
+        p = getattr(model, "p", None)
+        if p is not None and hasattr(p, "_res4lyf_skip_final"):
+            skip_final = bool(p._res4lyf_skip_final)
+        elif _CURRENT_SKIP_FINAL is not None:
+            skip_final = bool(_CURRENT_SKIP_FINAL)
+        else:
+            try:
+                from modules import shared
+                skip_final = getattr(shared.opts, "res4lyf_skip_final_model_call", True)
+            except Exception:
+                skip_final = True
+
+        existing_eo = call_kwargs.get("extra_options", "")
         if skip_final:
-            existing_eo = call_kwargs.get("extra_options", "")
             if "skip_final_model_call" not in existing_eo:
                 call_kwargs["extra_options"] = f"{existing_eo}\nskip_final_model_call".strip()
+        else:
+            if "skip_final_model_call" in existing_eo:
+                lines = [line for line in existing_eo.splitlines() if line.strip() != "skip_final_model_call"]
+                call_kwargs["extra_options"] = "\n".join(lines).strip()
 
         out = sample_rk_beta(
             adapter,
@@ -282,32 +299,56 @@ def _register_schedulers() -> None:
             sd_schedulers.schedulers_map[sch.label] = sch
 
 
-def _register_ui_settings() -> None:
-    try:
-        from modules import script_callbacks, shared
+class Res4lyfScript(scripts.Script):
+    sorting_priority = 2025
 
-        def on_ui_settings():
-            section = ("res4lyf", "RES4LYF Sampler")
-            shared.opts.add_option(
-                "res4lyf_skip_final_model_call",
-                shared.OptionInfo(
-                    True,
-                    "Skip final model call at sigma_min (eliminates delay/freeze at 100% / 25/25)",
-                    section=section,
-                    category_id="sd",
-                ),
+    def title(self):
+        return "Skip Final Model Call (RES4LYF)"
+
+    def show(self, is_img2img):
+        return scripts.AlwaysVisible
+
+    def ui(self, is_img2img):
+        elem_prefix = "img2img" if is_img2img else "txt2img"
+        elem_id = f"{elem_prefix}_res4lyf_skip_final"
+
+        with InputAccordion(True, label=self.title(), elem_id=elem_id) as enable:
+            gr.Markdown(
+                "**Skip final model call at sigma_min (eliminates delay/freeze at 100% / 25/25)**\n\n"
+                "Bypasses redundant denoiser evaluation at `sigma_min` for RES, DEIS, and ETDRK samplers, "
+                "eliminating the completion delay/freeze before decoded image display."
             )
 
-        script_callbacks.on_ui_settings(on_ui_settings)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("sd-forge-res4lyf: could not register ui_settings callback: %s", exc)
+        def get_skip_final_state(params: dict):
+            for k, v in params.items():
+                k_clean = str(k).strip().lower()
+                if "res4lyf" in k_clean and "skip" in k_clean:
+                    return str(v).strip().lower() in ("true", "1", "yes", "on")
+                if k_clean in ("res4lyf_skip_final", "res4lyf skip final"):
+                    return str(v).strip().lower() in ("true", "1", "yes", "on")
+            return gr.skip()
+
+        self.infotext_fields = [
+            infotext_utils.PasteField(enable, get_skip_final_state),
+        ]
+
+        return [enable]
+
+    def process(self, p, enable: bool = True, *args, **kwargs):
+        global _CURRENT_SKIP_FINAL
+        _CURRENT_SKIP_FINAL = bool(enable)
+        p._res4lyf_skip_final = bool(enable)
+
+    def process_before_every_sampling(self, p, enable: bool = True, *args, **kwargs):
+        global _CURRENT_SKIP_FINAL
+        _CURRENT_SKIP_FINAL = bool(enable)
+        p._res4lyf_skip_final = bool(enable)
 
 
 # Run registration at import time.
 try:
     _register_samplers()
     _register_schedulers()
-    _register_ui_settings()
 except Exception as exc:  # pragma: no cover
     logger.error("sd-forge-res4lyf: registration failed: %s", exc)
     logger.debug(traceback.format_exc())
