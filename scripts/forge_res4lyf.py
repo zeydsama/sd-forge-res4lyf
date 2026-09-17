@@ -77,6 +77,19 @@ def _build_wrapper(rk_type: str, ode: bool = False) -> Callable:
         # an unexpected fp64 tensor.
         in_dtype = x.dtype
         in_device = x.device
+
+        call_kwargs = dict(kwargs)
+        try:
+            from modules import shared
+            skip_final = getattr(shared.opts, "res4lyf_skip_final_model_call", True)
+        except Exception:
+            skip_final = True
+
+        if skip_final:
+            existing_eo = call_kwargs.get("extra_options", "")
+            if "skip_final_model_call" not in existing_eo:
+                call_kwargs["extra_options"] = f"{existing_eo}\nskip_final_model_call".strip()
+
         out = sample_rk_beta(
             adapter,
             x,
@@ -85,7 +98,7 @@ def _build_wrapper(rk_type: str, ode: bool = False) -> Callable:
             extra_args,
             callback,
             disable,
-            **kwargs,
+            **call_kwargs,
         )
         if out.dtype != in_dtype or out.device != in_device:
             out = out.to(dtype=in_dtype, device=in_device)
@@ -95,25 +108,31 @@ def _build_wrapper(rk_type: str, ode: bool = False) -> Callable:
     return _sample
 
 
-# Definitions mirror RES4LYF/beta/__init__.py.
+# Definitions mirror RES4LYF/beta/__init__.py with extended RK solvers.
 _RES_SAMPLERS = [
     # (label, rk_type, ode, scheduler_hint)
-    ("RES 2M",     "res_2m", False, "beta"),
-    ("RES 3M",     "res_3m", False, "beta"),
-    ("RES 2S",     "res_2s", False, "beta"),
-    ("RES 3S",     "res_3s", False, "beta"),
-    ("RES 5S",     "res_5s", False, "beta"),
-    ("RES 6S",     "res_6s", False, "beta"),
-    ("RES 2M ODE", "res_2m", True,  "beta"),
-    ("RES 3M ODE", "res_3m", True,  "beta"),
-    ("RES 2S ODE", "res_2s", True,  "beta"),
-    ("RES 3S ODE", "res_3s", True,  "beta"),
-    ("RES 5S ODE", "res_5s", True,  "beta"),
-    ("RES 6S ODE", "res_6s", True,  "beta"),
-    ("DEIS 2M",    "deis_2m", False, "beta"),
-    ("DEIS 3M",    "deis_3m", False, "beta"),
-    ("DEIS 2M ODE","deis_2m", True,  "beta"),
-    ("DEIS 3M ODE","deis_3m", True,  "beta"),
+    ("RES 2M",        "res_2m",     False, "beta"),
+    ("RES 3M",        "res_3m",     False, "beta"),
+    ("RES 2S",        "res_2s",     False, "beta"),
+    ("RES 3S",        "res_3s",     False, "beta"),
+    ("RES 4S",        "res_4s",     False, "beta"),
+    ("RES 5S",        "res_5s",     False, "beta"),
+    ("RES 6S",        "res_6s",     False, "beta"),
+    ("RES 8S",        "res_8s",     False, "beta"),
+    ("RES 2M ODE",    "res_2m",     True,  "beta"),
+    ("RES 3M ODE",    "res_3m",     True,  "beta"),
+    ("RES 2S ODE",    "res_2s",     True,  "beta"),
+    ("RES 3S ODE",    "res_3s",     True,  "beta"),
+    ("RES 4S ODE",    "res_4s",     True,  "beta"),
+    ("RES 5S ODE",    "res_5s",     True,  "beta"),
+    ("RES 6S ODE",    "res_6s",     True,  "beta"),
+    ("RES 8S ODE",    "res_8s",     True,  "beta"),
+    ("DEIS 2M",       "deis_2m",    False, "beta"),
+    ("DEIS 3M",       "deis_3m",    False, "beta"),
+    ("DEIS 2M ODE",   "deis_2m",    True,  "beta"),
+    ("DEIS 3M ODE",   "deis_3m",    True,  "beta"),
+    ("ETDRK 4",       "etdrk4_4s",  False, "beta"),
+    ("ETDRK 4 ODE",   "etdrk4_4s",  True,  "beta"),
 ]
 
 
@@ -263,10 +282,32 @@ def _register_schedulers() -> None:
             sd_schedulers.schedulers_map[sch.label] = sch
 
 
+def _register_ui_settings() -> None:
+    try:
+        from modules import script_callbacks, shared
+
+        def on_ui_settings():
+            section = ("res4lyf", "RES4LYF Sampler")
+            shared.opts.add_option(
+                "res4lyf_skip_final_model_call",
+                shared.OptionInfo(
+                    True,
+                    "Skip final model call at sigma_min (eliminates delay/freeze at 100% / 25/25)",
+                    section=section,
+                    category_id="sd",
+                ),
+            )
+
+        script_callbacks.on_ui_settings(on_ui_settings)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("sd-forge-res4lyf: could not register ui_settings callback: %s", exc)
+
+
 # Run registration at import time.
 try:
     _register_samplers()
     _register_schedulers()
+    _register_ui_settings()
 except Exception as exc:  # pragma: no cover
     logger.error("sd-forge-res4lyf: registration failed: %s", exc)
     logger.debug(traceback.format_exc())

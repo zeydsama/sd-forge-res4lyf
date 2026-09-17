@@ -248,6 +248,7 @@ def sample_rk_beta(
     model_device   = model.inner_model.inner_model.device #x.device
     work_device    = 'cpu' if EO("work_device_cpu") else model_device
 
+    STATE_INFO_REQUESTED = state_info_out is not None
     state_info     = {} if state_info     is None else state_info
     state_info_out = {} if state_info_out is None else state_info_out
     
@@ -2123,58 +2124,59 @@ def sample_rk_beta(
         callback_step = len(sigmas)-1 - step if sampler_mode == "unsample" else step
         preview_callback(x, eps, denoised, x_, eps_, data_, callback_step, sigma, sigma_next, callback, EO, preview_override=data_cached, FLOW_STOPPED=FLOW_STOPPED)
 
-    if INIT_SAMPLE_LOOP:
-        state_info_out = state_info
-    else:
-        if guides is not None and guides.get('guide_mode', "") == 'inversion':
-            guide_inversion_y0     = state_info.get('guide_inversion_y0')
-            guide_inversion_y0_inv = state_info.get('guide_inversion_y0_inv')
-            
-            if sampler_mode == "unsample" and guide_inversion_y0 is None:
-                guide_inversion_y0     = LG.y0.clone()
-            if sampler_mode == "unsample" and guide_inversion_y0_inv is None:
-                guide_inversion_y0_inv = LG.y0_inv.clone()
-                
-            if sampler_mode in {"standard", "resample"} and guide_inversion_y0 is None:
-                guide_inversion_y0 = NS.noise_sampler(sigma=NS.sigma_max, sigma_next=NS.sigma_min).to(x)
-                guide_inversion_y0 = normalize_zscore(guide_inversion_y0, channelwise=True, inplace=True)
-            if sampler_mode in {"standard", "resample"} and guide_inversion_y0_inv is None:
-                guide_inversion_y0_inv = NS.noise_sampler(sigma=NS.sigma_max, sigma_next=NS.sigma_min).to(x)
-                guide_inversion_y0_inv = normalize_zscore(guide_inversion_y0_inv, channelwise=True, inplace=True)
-                
-            state_info_out['guide_inversion_y0']     = guide_inversion_y0
-            state_info_out['guide_inversion_y0_inv'] = guide_inversion_y0_inv
+    if STATE_INFO_REQUESTED:
+        if INIT_SAMPLE_LOOP:
+            state_info_out.update(state_info)
+        else:
+            if guides is not None and guides.get('guide_mode', "") == 'inversion':
+                guide_inversion_y0     = state_info.get('guide_inversion_y0')
+                guide_inversion_y0_inv = state_info.get('guide_inversion_y0_inv')
 
-        state_info_out['raw_x']             = x.to('cpu')
-        state_info_out['denoised']          = denoised.to('cpu')
-        state_info_out['data_prev_']        = data_prev_.to('cpu')
-        state_info_out['end_step']          = step
-        state_info_out['sigma_next']        = sigma_next.clone()
-        state_info_out['sigmas']            = sigmas_scheduled.clone()
-        state_info_out['sampler_mode']      = sampler_mode
-        state_info_out['last_rng']          = NS.noise_sampler .generator.get_state().clone()
-        state_info_out['last_rng_substep']  = NS.noise_sampler2.generator.get_state().clone()
-        state_info_out['completed']         = step == len(sigmas)-2 and sigmas[-1] == 0 and sigmas[-2] == NS.sigma_min
-        state_info_out['FLOW_STARTED']      = FLOW_STARTED
-        state_info_out['FLOW_STOPPED']      = FLOW_STOPPED
-        state_info_out['noise_bongflow']    = noise_bongflow
-        state_info_out['y0_bongflow']       = y0_bongflow
-        state_info_out['y0_bongflow_orig']  = y0_bongflow_orig
-        state_info_out['y0_standard_guide']       = y0_standard_guide
-        state_info_out['y0_inv_standard_guide']  = y0_inv_standard_guide
-        state_info_out['data_prev_y_']      = data_prev_y_
-        state_info_out['data_prev_x_']      = data_prev_x_
+                if sampler_mode == "unsample" and guide_inversion_y0 is None:
+                    guide_inversion_y0     = LG.y0.clone()
+                if sampler_mode == "unsample" and guide_inversion_y0_inv is None:
+                    guide_inversion_y0_inv = LG.y0_inv.clone()
 
-        if noise_initial is not None:
-            state_info_out['noise_initial'] = noise_initial.to('cpu')
-        if image_initial is not None:
-            state_info_out['image_initial'] = image_initial.to('cpu')
+                if sampler_mode in {"standard", "resample"} and guide_inversion_y0 is None:
+                    guide_inversion_y0 = NS.noise_sampler(sigma=NS.sigma_max, sigma_next=NS.sigma_min).to(x)
+                    guide_inversion_y0 = normalize_zscore(guide_inversion_y0, channelwise=True, inplace=True)
+                if sampler_mode in {"standard", "resample"} and guide_inversion_y0_inv is None:
+                    guide_inversion_y0_inv = NS.noise_sampler(sigma=NS.sigma_max, sigma_next=NS.sigma_min).to(x)
+                    guide_inversion_y0_inv = normalize_zscore(guide_inversion_y0_inv, channelwise=True, inplace=True)
 
-        if FLOW_STARTED and not FLOW_STOPPED:
-            state_info_out['y0']           = y0.to('cpu') 
-            #state_info_out['y0_inv']       = y0_inv.to('cpu')       # TODO: implement this?
-            state_info_out['data_cached']  = data_cached.to('cpu')
-            state_info_out['data_x_prev_'] = data_x_prev_.to('cpu')
+                state_info_out['guide_inversion_y0']     = guide_inversion_y0
+                state_info_out['guide_inversion_y0_inv'] = guide_inversion_y0_inv
+
+            state_info_out['raw_x']             = x.to('cpu')
+            state_info_out['denoised']          = denoised.to('cpu')
+            state_info_out['data_prev_']        = data_prev_.to('cpu')
+            state_info_out['end_step']          = step
+            state_info_out['sigma_next']        = sigma_next.clone()
+            state_info_out['sigmas']            = sigmas_scheduled.clone()
+            state_info_out['sampler_mode']      = sampler_mode
+            state_info_out['last_rng']          = NS.noise_sampler .generator.get_state().clone()
+            state_info_out['last_rng_substep']  = NS.noise_sampler2.generator.get_state().clone()
+            state_info_out['completed']         = step == len(sigmas)-2 and sigmas[-1] == 0 and sigmas[-2] == NS.sigma_min
+            state_info_out['FLOW_STARTED']      = FLOW_STARTED
+            state_info_out['FLOW_STOPPED']      = FLOW_STOPPED
+            state_info_out['noise_bongflow']    = noise_bongflow
+            state_info_out['y0_bongflow']       = y0_bongflow
+            state_info_out['y0_bongflow_orig']  = y0_bongflow_orig
+            state_info_out['y0_standard_guide']       = y0_standard_guide
+            state_info_out['y0_inv_standard_guide']  = y0_inv_standard_guide
+            state_info_out['data_prev_y_']      = data_prev_y_
+            state_info_out['data_prev_x_']      = data_prev_x_
+
+            if noise_initial is not None:
+                state_info_out['noise_initial'] = noise_initial.to('cpu')
+            if image_initial is not None:
+                state_info_out['image_initial'] = image_initial.to('cpu')
+
+            if FLOW_STARTED and not FLOW_STOPPED:
+                state_info_out['y0']           = y0.to('cpu')
+                #state_info_out['y0_inv']       = y0_inv.to('cpu')       # TODO: implement this?
+                state_info_out['data_cached']  = data_cached.to('cpu')
+                state_info_out['data_x_prev_'] = data_x_prev_.to('cpu')
 
     return x
 

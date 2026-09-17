@@ -1340,8 +1340,14 @@ def get_rk_methods_beta(rk_type       : str,
     multistep_fallback_sampler    = EO("multistep_fallback_sampler", "")
     multistep_extra_initial_steps = EO("multistep_extra_initial_steps", 1)
     
-    #if RK_Method_Beta.is_exponential(rk_type): 
-    if rk_type.startswith(("res", "dpmpp", "ddim", "pec", "etdrk", "lawson")): 
+    #if RK_Method_Beta.is_exponential(rk_type):
+    if rk_type.startswith(("res", "dpmpp", "ddim", "pec", "etdrk", "lawson")):
+        if rk_type == "res_4s":
+            rk_type = "res_4s_strehmel_weiner"
+        elif rk_type == "res_8s_alt":
+            rk_type = "res_8s"
+        elif rk_type in ("etdrk4", "etdrk4_ode"):
+            rk_type = "etdrk4_4s"
         h_no_eta = -torch.log(sigma_next/sigma)
         h_prev1_no_eta = -torch.log(sigmas[step]/sigmas[step-1]) if step >= 1 else None
         h_prev2_no_eta = -torch.log(sigmas[step]/sigmas[step-2]) if step >= 2 else None
