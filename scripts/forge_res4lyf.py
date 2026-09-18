@@ -22,7 +22,7 @@ import traceback
 from typing import Callable
 
 import gradio as gr
-from modules import infotext_utils, scripts
+from modules import infotext_utils, script_callbacks, scripts, shared
 from modules.ui_components import InputAccordion
 
 # Ensure the extension root is on sys.path so `lib_res4lyf` is importable.
@@ -343,6 +343,26 @@ class Res4lyfScript(scripts.Script):
         global _CURRENT_SKIP_FINAL
         _CURRENT_SKIP_FINAL = bool(enable)
         p._res4lyf_skip_final = bool(enable)
+
+
+def on_ui_settings():
+    section = ("res4lyf", "RES4LYF")
+    shared.opts.add_option(
+        "res4lyf_skip_final_model_call",
+        shared.OptionInfo(
+            True,
+            "Skip final model call at sigma_min (RES4LYF)",
+            gr.Checkbox,
+            {"interactive": True},
+            section=section,
+        ),
+    )
+
+
+try:
+    script_callbacks.on_ui_settings(on_ui_settings)
+except Exception:
+    pass
 
 
 # Run registration at import time.
