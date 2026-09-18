@@ -299,6 +299,25 @@ def _register_schedulers() -> None:
             sd_schedulers.schedulers_map[sch.label] = sch
 
 
+def _clean_extra_options():
+    """Ensure res4lyf_skip_final_model_call is not duplicated in extra options section."""
+    try:
+        from modules import shared
+        dirty = False
+        for key in ("extra_options_txt2img", "extra_options_img2img"):
+            val = getattr(shared.opts, key, None)
+            if isinstance(val, list) and "res4lyf_skip_final_model_call" in val:
+                setattr(shared.opts, key, [x for x in val if x != "res4lyf_skip_final_model_call"])
+                dirty = True
+        if dirty:
+            try:
+                shared.opts.save(shared.config_filename)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 class Res4lyfScript(scripts.Script):
     sorting_priority = 2025
 
@@ -306,9 +325,11 @@ class Res4lyfScript(scripts.Script):
         return "Skip Final Model Call (RES4LYF)"
 
     def show(self, is_img2img):
+        _clean_extra_options()
         return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
+        _clean_extra_options()
         elem_prefix = "img2img" if is_img2img else "txt2img"
         elem_id = f"{elem_prefix}_res4lyf_skip_final"
 
@@ -357,12 +378,16 @@ def on_ui_settings():
             section=section,
         ),
     )
+    _clean_extra_options()
 
 
 try:
     script_callbacks.on_ui_settings(on_ui_settings)
+    script_callbacks.on_before_ui(_clean_extra_options)
 except Exception:
     pass
+
+_clean_extra_options()
 
 
 # Run registration at import time.
